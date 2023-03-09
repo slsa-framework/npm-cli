@@ -4,8 +4,10 @@ const npa = require('npm-package-arg')
 const log = require('proc-log')
 const semver = require('semver')
 const { URL } = require('url')
+const { sigstore } = require('sigstore')
 const ssri = require('ssri')
 const ciInfo = require('ci-info')
+const fs = require(`fs`)
 
 const { generateProvenance } = require('./provenance')
 
@@ -185,6 +187,34 @@ const buildMetadata = async (registry, manifest, tarballData, spec, opts) => {
     const serializedBundle = JSON.stringify(provenanceBundle)
     root._attachments[provenanceBundleName] = {
       content_type: provenanceBundle.mediaType,
+      data: serializedBundle,
+      length: serializedBundle.length,
+    }
+  }
+
+  if (typeof provenance === 'string') {
+    log.notice('publish', 'Using existing signed provenance statement')
+
+    const unverifiedSerializedBundle = fs.readFileSync(provenance, 'utf-8')
+
+    // Parse and validate the bundle.
+    const unverifiedBundle = JSON.parse(unverifiedSerializedBundle)
+    await sigstore.verify(unverifiedBundle)
+
+    // Bundle has been verified. Explicitly trust the bundle.
+    const bundle = unverifiedBundle;
+    const serializedBundle = unverifiedSerializedBundle;
+
+    log.notice('publish', 'Provenance bundle verified')
+
+    const tlogEntry = bundle?.verificationMaterial?.tlogEntries[0]
+    if (tlogEntry) {
+      const logUrl = `${TLOG_BASE_URL}?logIndex=${tlogEntry.logIndex}`
+      log.notice('publish', `Provenance statement has transparency log entry: ${logUrl}`)
+    }
+
+    root._attachments[provenanceBundleName] = {
+      content_type: bundle.mediaType,
       data: serializedBundle,
       length: serializedBundle.length,
     }
